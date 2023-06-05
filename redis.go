@@ -650,6 +650,7 @@ func (c *Client) Conn() *Conn {
 }
 
 // Do create a Cmd from the args and processes the cmd.
+// 跟cmdable中封装好的方法差不多啦，只不过cmd里面的方法都是封装好的，我们传值就ok了。这个由我们自由定义，传命令+值
 func (c *Client) Do(ctx context.Context, args ...interface{}) *Cmd {
 	cmd := NewCmd(ctx, args...)
 	_ = c.Process(ctx, cmd)
