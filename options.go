@@ -132,7 +132,7 @@ type Options struct {
 	TLSConfig *tls.Config
 
 	// Limiter interface used to implement circuit breaker or rate limiter.
-	Limiter Limiter
+	Limiter Limiter // NOTE 牛逼，还可以传入自定义限流器
 
 	// Enables read only queries on slave/follower nodes.
 	readOnly bool

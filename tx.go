@@ -47,7 +47,7 @@ func (c *Tx) init() {
 }
 
 func (c *Tx) Process(ctx context.Context, cmd Cmder) error {
-	err := c.processHook(ctx, cmd)
+	err := c.processHook(ctx, cmd) // 先执行🪝
 	cmd.SetErr(err)
 	return err
 }

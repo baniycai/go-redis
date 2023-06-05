@@ -523,6 +523,7 @@ var (
 	_ Cmdable = (*ClusterClient)(nil)
 )
 
+// 初始化时赋值为Client的Process()方法
 type cmdable func(ctx context.Context, cmd Cmder) error
 
 type statefulCmdable func(ctx context.Context, cmd Cmder) error

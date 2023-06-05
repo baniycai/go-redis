@@ -36,6 +36,7 @@ type Error interface {
 
 var _ Error = proto.RedisError("")
 
+// EOF以及一些需要重试的(redis提示LOADING或者TRYAGAIN)，进行重试；如果是ctx Canceled或者DeadlineExceeded，则不重试啦
 func shouldRetry(err error, retryTimeout bool) bool {
 	switch err {
 	case io.EOF, io.ErrUnexpectedEOF:

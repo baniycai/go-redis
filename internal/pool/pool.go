@@ -56,8 +56,8 @@ type Pooler interface {
 type Options struct {
 	Dialer func(context.Context) (net.Conn, error)
 
-	PoolFIFO        bool
-	PoolSize        int
+	PoolFIFO        bool // 取idleConn的conn时是否采用FIFO的方式
+	PoolSize        int  // 连接池大小
 	PoolTimeout     time.Duration
 	MinIdleConns    int
 	MaxIdleConns    int
@@ -72,21 +72,21 @@ type lastDialErrorWrap struct {
 type ConnPool struct {
 	cfg *Options
 
-	dialErrorsNum uint32 // atomic
+	dialErrorsNum uint32 // atomic   拨号失败次数
 	lastDialError atomic.Value
 
-	queue chan struct{}
+	queue chan struct{} // size=opt.PoolSize  等待队列，取conn时需要queue <- struct{}{}，成功则可以取conn
 
 	connsMu   sync.Mutex
-	conns     []*Conn
-	idleConns []*Conn
+	conns     []*Conn // size=opt.PoolSize   所有连接
+	idleConns []*Conn // size=opt.PoolSize   空闲连接
 
-	poolSize     int
-	idleConnsLen int
+	poolSize     int // 当前的连接池大小
+	idleConnsLen int // 当前的空闲连接数量
 
 	stats Stats
 
-	_closed uint32 // atomic
+	_closed uint32 // atomic   连接池是否已关闭，为1则是已关闭
 }
 
 var _ Pooler = (*ConnPool)(nil)
@@ -107,6 +107,7 @@ func NewConnPool(opt *Options) *ConnPool {
 	return p
 }
 
+// NOTE 不断循环重复拨号建立连接，直到现有线程池大小达到配置的大小，或者现有的空闲连接数达到配置的数量
 func (p *ConnPool) checkMinIdleConns() {
 	if p.cfg.MinIdleConns == 0 {
 		return
@@ -118,7 +119,7 @@ func (p *ConnPool) checkMinIdleConns() {
 			p.idleConnsLen++
 
 			go func() {
-				err := p.addIdleConn()
+				err := p.addIdleConn() // 拨号建立连接，加入conns和idleConns
 				if err != nil && err != ErrClosed {
 					p.connsMu.Lock()
 					p.poolSize--
@@ -126,7 +127,7 @@ func (p *ConnPool) checkMinIdleConns() {
 					p.connsMu.Unlock()
 				}
 
-				p.freeTurn()
+				p.freeTurn() // <-p.queue
 			}()
 		default:
 			return
@@ -199,7 +200,7 @@ func (p *ConnPool) dialConn(ctx context.Context, pooled bool) (*Conn, error) {
 	if err != nil {
 		p.setLastDialError(err)
 		if atomic.AddUint32(&p.dialErrorsNum, 1) == uint32(p.cfg.PoolSize) {
-			go p.tryDial()
+			go p.tryDial() // 循环直到连接建立成功，置空dialErrorsNum
 		}
 		return nil, err
 	}
@@ -209,6 +210,8 @@ func (p *ConnPool) dialConn(ctx context.Context, pooled bool) (*Conn, error) {
 	return cn, nil
 }
 
+// for尝试拨号建立连接，直到连接建立成功之后将p.dialErrorsNum置为0，并将建立的连接关闭
+// 所以这个方法的目的只是为了清空dialErrorsNum
 func (p *ConnPool) tryDial() {
 	for {
 		if p.closed() {
@@ -241,6 +244,9 @@ func (p *ConnPool) getLastDialError() error {
 }
 
 // Get returns existed connection from the pool or creates a new one.
+// 先尝试能否queue <- struct{}{}，可以说明可以get conn，不能就说明等待的太多了，返回err
+// 之后从ConnPool取一个conn，取完看看是否需要补充，最后再校验下conn的状态，以及统计conn缓存的命中情况
+// 若从池中拿不到，则新建一个conn
 func (p *ConnPool) Get(ctx context.Context) (*Conn, error) {
 	if p.closed() {
 		return nil, ErrClosed
@@ -283,6 +289,7 @@ func (p *ConnPool) Get(ctx context.Context) (*Conn, error) {
 	return newcn, nil
 }
 
+// 等待队列还有空间时，可以直接取conn；无空间则等待cfg.PoolTimeout，到期到返回err
 func (p *ConnPool) waitTurn(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
@@ -323,6 +330,7 @@ func (p *ConnPool) freeTurn() {
 	<-p.queue
 }
 
+// 采用先进先出或先进后出的方法，从idleConns取一个conn，之后再调用checkMinIdleConns检查是否需要补充conn
 func (p *ConnPool) popIdle() (*Conn, error) {
 	if p.closed() {
 		return nil, ErrClosed
@@ -483,6 +491,7 @@ func (p *ConnPool) Close() error {
 	return firstErr
 }
 
+// 校验连接的最大生命周期和最大空闲时间，以及看看能否读出东西来，有点小6
 func (p *ConnPool) isHealthyConn(cn *Conn) bool {
 	now := time.Now()
 

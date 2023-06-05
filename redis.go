@@ -39,9 +39,13 @@ type (
 	ProcessPipelineHook func(ctx context.Context, cmds []Cmder) error
 )
 
+// 感觉就是个中间件，跟gin的差不多，不过这里的不是在请求时拦截，而是有多种拦截场景，比如在拨号时拦截、在发送redis command时拦截
+// 也是要在中间件中调用next(ctx, cmd)来执行下一个中间件，我们要执行的命令通常是在最后一个中间件
 type hooksMixin struct {
-	slice   []Hook
+	slice   []Hook // 添加Hook时会首先放入这里
 	initial hooks
+	// 对应的元素值先取自initial，然后再从后往前遍历，使用slice的item的三个方法来wrapped current的对应属性，如果wrapped!=nil，则更新的current的值
+	// 所以最终的执行顺序是：h1 h2 h3 xx
 	current hooks
 }
 
@@ -52,7 +56,7 @@ func (hs *hooksMixin) initHooks(hooks hooks) {
 
 type hooks struct {
 	dial       DialHook
-	process    ProcessHook
+	process    ProcessHook // 最重要的是默认的c.baseClient.process，手动添加的都是在外面包一层
 	pipeline   ProcessPipelineHook
 	txPipeline ProcessPipelineHook
 }
@@ -264,6 +268,7 @@ func (c *baseClient) _getConn(ctx context.Context) (*pool.Conn, error) {
 	return cn, nil
 }
 
+// 搞一些hello、select等等命令，估计是为了实验下这个conn是否正常可用
 func (c *baseClient) initConn(ctx context.Context, cn *pool.Conn) error {
 	if cn.Inited {
 		return nil
@@ -367,6 +372,7 @@ func (c *baseClient) dial(ctx context.Context, network, addr string) (net.Conn, 
 	return c.opt.Dialer(ctx, network, addr)
 }
 
+// NOTE redis-client中最关键的方法
 func (c *baseClient) process(ctx context.Context, cmd Cmder) error {
 	var lastErr error
 	for attempt := 0; attempt <= c.opt.MaxRetries; attempt++ {
@@ -382,7 +388,9 @@ func (c *baseClient) process(ctx context.Context, cmd Cmder) error {
 	return lastErr
 }
 
+// NOTE 关键方法，主要是将cmd按redis协议组织后写入conn，再将相应的内容按协议读取出来，结果都塞到cmd的val中去
 func (c *baseClient) _process(ctx context.Context, cmd Cmder, attempt int) (bool, error) {
+	// 重试之间需要有一定的时间间隔，这里根据retryBackoff来计算
 	if attempt > 0 {
 		if err := internal.Sleep(ctx, c.retryBackoff(attempt)); err != nil {
 			return false, err
@@ -390,15 +398,17 @@ func (c *baseClient) _process(ctx context.Context, cmd Cmder, attempt int) (bool
 	}
 
 	retryTimeout := uint32(0)
-	if err := c.withConn(ctx, func(ctx context.Context, cn *pool.Conn) error {
-		if err := cn.WithWriter(c.context(ctx), c.opt.WriteTimeout, func(wr *proto.Writer) error {
-			return writeCmd(wr, cmd)
-		}); err != nil {
+
+	if err := c.withConn(ctx, func(ctx context.Context, cn *pool.Conn) error { // 取conn，调func(ctx context.Context, cn *pool.Conn)
+		if err := cn.WithWriter(c.context(ctx), c.opt.WriteTimeout, // 处理Deadline相关，并刷新writeCmd的写入
+			func(wr *proto.Writer) error {
+				return writeCmd(wr, cmd) // 按照redis协议组织args并进行写入
+			}); err != nil {
 			atomic.StoreUint32(&retryTimeout, 1)
 			return err
 		}
-
-		if err := cn.WithReader(c.context(ctx), c.cmdTimeout(cmd), cmd.readReply); err != nil {
+		// TODO readReply方法还没看
+		if err := cn.WithReader(c.context(ctx), c.cmdTimeout(cmd), cmd.readReply); err != nil { // 处理超时相关，再调用readReply
 			if cmd.readTimeout() == nil {
 				atomic.StoreUint32(&retryTimeout, 1)
 			} else {
@@ -605,22 +615,22 @@ type Client struct {
 
 // NewClient returns a client to the Redis Server specified by Options.
 func NewClient(opt *Options) *Client {
-	opt.init()
+	opt.init() // NOTE 蛮好的，先对配置做一层校验和初始化
 
 	c := Client{
 		baseClient: &baseClient{
 			opt: opt,
 		},
 	}
-	c.init()
+	c.init() // 一脸懵逼
 	c.connPool = newConnPool(opt, c.dialHook)
 
 	return &c
 }
 
 func (c *Client) init() {
-	c.cmdable = c.Process
-	c.initHooks(hooks{
+	c.cmdable = c.Process // 用client的方法来初始client的属性，什么操作...
+	c.initHooks(hooks{    // 用baseClient的方法来初始化client的hooksMixin，又是什么操作... TODO hook这部分未看
 		dial:       c.baseClient.dial,
 		process:    c.baseClient.process,
 		pipeline:   c.baseClient.processPipeline,

@@ -34,6 +34,9 @@ func NewWriter(wr writer) *Writer {
 	}
 }
 
+// *\r\nlenBuf+len(args)*$\r\nlenBufb\r\n
+// 例：*\r\nlenBuf$\r\nlenBufb\r\n$\r\nlenBufb\r\n
+// 按照redis协议组织args并进行写入
 func (w *Writer) WriteArgs(args []interface{}) error {
 	if err := w.WriteByte(RespArray); err != nil {
 		return err
@@ -52,6 +55,7 @@ func (w *Writer) WriteArgs(args []interface{}) error {
 	return nil
 }
 
+// \r\nlenBuf
 func (w *Writer) writeLen(n int) error {
 	w.lenBuf = strconv.AppendUint(w.lenBuf[:0], uint64(n), 10)
 	w.lenBuf = append(w.lenBuf, '\r', '\n')
@@ -59,6 +63,8 @@ func (w *Writer) writeLen(n int) error {
 	return err
 }
 
+// 将args转成redis协议的格式： $\r\nlenBufb\r\n，lenBuf是b的长度，b是要发送的数据，即arg
+// TODO 这个格式有点奇怪呀，特别是len(args)!=0的时候
 func (w *Writer) WriteArg(v interface{}) error {
 	switch v := v.(type) {
 	case nil:
@@ -115,6 +121,7 @@ func (w *Writer) WriteArg(v interface{}) error {
 	}
 }
 
+// $\r\nlenBufb\r\n
 func (w *Writer) bytes(b []byte) error {
 	if err := w.WriteByte(RespString); err != nil {
 		return err

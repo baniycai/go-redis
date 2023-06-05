@@ -92,24 +92,26 @@ func (r *Reader) PeekReplyType() (byte, error) {
 
 // ReadLine Return a valid reply, it will check the protocol or redis error,
 // and discard the attribute type.
+// TODO 未看
+// 正常读取的话，line[0]是type，剩下的是内容
 func (r *Reader) ReadLine() ([]byte, error) {
 	line, err := r.readLine()
 	if err != nil {
 		return nil, err
 	}
 	switch line[0] {
-	case RespError:
+	case RespError: // -
 		return nil, ParseErrorReply(line)
-	case RespNil:
+	case RespNil: // _
 		return nil, Nil
-	case RespBlobError:
+	case RespBlobError: // !
 		var blobErr string
 		blobErr, err = r.readStringReply(line)
 		if err == nil {
 			err = RedisError(blobErr)
 		}
 		return nil, err
-	case RespAttr:
+	case RespAttr: // |
 		if err = r.Discard(line); err != nil {
 			return nil, err
 		}
@@ -213,6 +215,7 @@ func (r *Reader) readBigInt(line []byte) (*big.Int, error) {
 	return nil, fmt.Errorf("redis: can't parse bigInt reply: %q", line)
 }
 
+// 根据line指示的len,再从rd中读取出真正的内容
 func (r *Reader) readStringReply(line []byte) (string, error) {
 	n, err := replyLen(line)
 	if err != nil {
@@ -293,16 +296,16 @@ func (r *Reader) readMap(line []byte) (map[interface{}]interface{}, error) {
 }
 
 // -------------------------------
-
+// line[0]是type，line[1:]是内容
 func (r *Reader) ReadInt() (int64, error) {
 	line, err := r.ReadLine()
 	if err != nil {
 		return 0, err
 	}
 	switch line[0] {
-	case RespInt, RespStatus:
+	case RespInt, RespStatus: // :  +
 		return util.ParseInt(line[1:], 10, 64)
-	case RespString:
+	case RespString: // $
 		s, err := r.readStringReply(line)
 		if err != nil {
 			return 0, err

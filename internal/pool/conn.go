@@ -18,10 +18,10 @@ type Conn struct {
 
 	rd *proto.Reader
 	bw *bufio.Writer
-	wr *proto.Writer
+	wr *proto.Writer // 跟bw应该是一样的，只是把bw包了一层，用来指示这个是专门用来写协议相关的
 
 	Inited    bool
-	pooled    bool
+	pooled    bool // 是否要放入pool中，当poolSize大于配置的size时不放入，即为false
 	createdAt time.Time
 }
 

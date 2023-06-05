@@ -112,7 +112,7 @@ func cmdString(cmd Cmder, val interface{}) string {
 
 type baseCmd struct {
 	ctx    context.Context
-	args   []interface{}
+	args   []interface{} // 要发送的redis server的参数，以[name1,value1,name2,value2,value22]这样的格式存在，如[set,key,value]
 	err    error
 	keyPos int8
 
